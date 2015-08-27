@@ -11,3 +11,4 @@
 %define rtems_gcc_patches      %{rtems_git_tools}/gcc
 %define rtems_newlib_patches   %{rtems_git_tools}/newlib
 %define rtems_gdb_patches      %{rtems_git_tools}/gdb
+%define isaac_tools            file:///other/rtems/isaac-tools
