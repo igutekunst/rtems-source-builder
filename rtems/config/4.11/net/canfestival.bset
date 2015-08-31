@@ -14,6 +14,9 @@
 #
 %include rtems-urls.bset
 
+%define isaac_patches_git https://raw.githubusercontent.com/igutekunst/rtems-source-builder/master/source-builder/patches/
+
+
 #
 # Build canfestival
 #
