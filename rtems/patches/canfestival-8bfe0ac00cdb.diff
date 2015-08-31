@@ -2,11 +2,11 @@
 # User Isaac Gutekunst <isaac.gutekunst@vecna.com>
 # Date 1440685021 14400
 #      Thu Aug 27 10:17:01 2015 -0400
-# Node ID 9c7c2dc2363206331f7e293c54895eb776d4c261
+# Node ID 503e05d9a464b390ef0c28bd6310ed62be1290fe
 # Parent  8bfe0ac00cdb4d473664fcbf1228a0f6a42eee15
 Added RTEMS Support
 
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 Makefile.in
+diff -r 8bfe0ac00cdb -r 503e05d9a464 Makefile.in
 --- a/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
 +++ b/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -46,7 +46,6 @@
@@ -17,7 +17,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 Makefile.in
  
  uninstall:
  	$(MAKE) -C drivers $@
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 configure
+diff -r 8bfe0ac00cdb -r 503e05d9a464 configure
 --- a/configure	Mon Aug 03 18:01:58 2015 +0200
 +++ b/configure	Thu Aug 27 10:17:01 2015 -0400
 @@ -593,6 +593,11 @@
@@ -32,7 +32,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 configure
  echo "Using ${LD} as a linker"
  
  # Guess prefix as regard cross compiling target machine
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/Makefile.in
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/Makefile.in
 --- a/drivers/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
 +++ b/drivers/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -46,9 +46,6 @@
@@ -45,7 +45,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/Makefile.in
  ifneq ($(TARGET),none)
  	$(MAKE) -C $(TARGET) $@
  endif
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/Makefile.in
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/can_rtems/Makefile.in
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,67 @@
@@ -116,14 +116,15 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/Makefile.in
 +	rm -f $(OBJS) libcanfestival_$(CAN_DRIVER).so
 +
 +mrproper: clean
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/can_rtems.c
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/can_rtems/can_rtems.c
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/can_rtems.c	Thu Aug 27 10:17:01 2015 -0400
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,123 @@
 +/*
 +This file is part of CanFestival, a library implementing CanOpen Stack.
 +
 +Copyright (C): Edouard TISSERANT and Francis DUPIN
++AVR Port: Andreas GLAUSER and Peter CHRISTEN
 +
 +See COPYING file for copyrights details.
 +
@@ -142,161 +143,107 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/can_rtems.c
 +Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 +*/
 +
-+#include <stdio.h>
-+#include <string.h>
-+#include <errno.h>
++//#define DEBUG_WAR_CONSOLE_ON
++//#define DEBUG_ERR_CONSOLE_ON
++
++
++#include "canfestival.h"
++#include <dev/can/can.h>
 +#include <fcntl.h>
++#include <bsp.h>
++#include <unistd.h>
++#include <rtems/libio.h>
 +
-+#include "canmsg.h"
-+#include "lincan.h"
 +
-+#include "can_driver.h"
 +
-+/*********functions which permit to communicate with the board****************/
-+UNS8 canReceive_driver(CAN_HANDLE fd0, Message *m)
++
++volatile unsigned char msg_received = 0;
++int can = 5;
++CAN_HANDLE canOpen_driver(s_BOARD * board)
++/******************************************************************************
++Initialize the hardware to receive CAN messages and start the timer for the
++CANopen stack.
++INPUT	bitrate		bitrate in kilobit
++OUTPUT	1 if successful	
++******************************************************************************/
 +{
-+  int res;
-+  struct canmsg_t canmsg;
++  int name_len = strlen(board->busname);
++  int prefix_len = strlen(lnx_can_dev_prefix);
++  char dev_name[prefix_len+name_len+1];
++  struct can_baudparams_t params;
++  int fd;
 +
-+  canmsg.flags = 0; /* Ensure standard receive, not required for LinCAN>=0.3.1 */
-+  do{
-+    res = read(fd0,&canmsg,sizeof(canmsg_t));
-+    if((res<0)&&(errno == -EAGAIN)) res = 0;
-+  }while(res==0);
++  /*o_flags = O_NONBLOCK;*/
 +
-+  if(res != sizeof(canmsg_t)) // No new message
-+    return 1;
++  memcpy(dev_name,lnx_can_dev_prefix,prefix_len);
++  memcpy(dev_name+prefix_len,board->busname,name_len);
++  dev_name[prefix_len+name_len] = 0;
++  printf("dev_name %s\n", dev_name);
++  can = open(dev_name, O_RDWR | O_NONBLOCK, 0640);
++  can_filter f = {
++      .number = 0,
++      .filter = can_filter_stdid(0x2),
++      .mask   = 0,
 +
-+  if(canmsg.flags&MSG_EXT){
-+    /* There is no mark for extended messages in CanFestival */;
-+  }
++  };
++  ioctl(can, CAN_SET_FILTER, &f);
++  return can;
++}
 +
-+  m->cob_id = canmsg.id;
-+  m->len = canmsg.length;
-+  if(canmsg.flags&MSG_RTR){
-+    m->rtr = 1;
-+  }else{
-+    m->rtr = 0;
-+    memcpy(m->data,canmsg.data,8);
-+  }
-+
++int canClose_driver(CAN_HANDLE fd) {
++  if (fd)
++    close(fd);
 +  return 0;
 +}
 +
-+/***************************************************************************/
-+UNS8 canSend_driver(CAN_HANDLE fd0, Message const *m)
++unsigned char canSend_driver(CAN_HANDLE fd, Message const *m)
++/******************************************************************************
++The driver send a CAN message passed from the CANopen stack
++INPUT	CAN_PORT is not used (only 1 avaiable)
++	Message *m pointer to message to send
++OUTPUT	1 if  hardware -> CAN frame
++******************************************************************************/
 +{
-+  int res;
-+  struct canmsg_t canmsg;
++  can_msg m2;
++  m2.id = m->cob_id;
++  m2.len = m->len;
++  memcpy(m2.data, m->data, m->len);
++  int status = write(fd, &m2, sizeof(m2));
++  return 1;
++}
 +
++unsigned char canReceive_driver(CAN_HANDLE fd, Message *m)
++/******************************************************************************
++The driver pass a received CAN message to the stack
++INPUT	Message *m pointer to received CAN message
++OUTPUT	1 if a message received
++******************************************************************************/
++{
++  can_msg rx_m;
 +
-+  canmsg.flags = 0;
-+  canmsg.id = m->cob_id;
-+  canmsg.length = m->len;
-+  if(m->rtr){
-+    canmsg.flags |= MSG_RTR;
-+  }else{
-+    memcpy(canmsg.data,m->data,8);
-+  }
-+
-+  if(canmsg.id >= 0x800){
-+    canmsg.flags |= MSG_EXT;
-+  }
-+
-+  res = write(fd0,&canmsg,sizeof(canmsg_t));
-+  if(res!=sizeof(canmsg_t))
++  int status = read(can, &rx_m, sizeof(rx_m));
++  if (status > 0) {
++    size_t i;
++    m->len = rx_m.len;
++    m->cob_id = rx_m.id;
++    memcpy(m->data, rx_m.data, m->len);
 +    return 1;
-+
-+  return 0;
-+}
-+
-+/***************************************************************************/
-+int TranslateBaudeRate(char* optarg){
-+	if(!strcmp( optarg, "1M")) return 1000000;
-+	if(!strcmp( optarg, "500K")) return 500000;
-+	if(!strcmp( optarg, "250K")) return 250000;
-+	if(!strcmp( optarg, "125K")) return 125000;
-+	if(!strcmp( optarg, "100K")) return 100000;
-+	if(!strcmp( optarg, "50K")) return 50000;
-+	if(!strcmp( optarg, "20K")) return 20000;
-+	if(!strcmp( optarg, "none")) return 0;
-+	return 0x0000;
-+}
-+
-+/***************************************************************************/
-+UNS8 canChangeBaudRate_driver( CAN_HANDLE fd0, char* baud)
-+{
-+	struct can_baudparams_t params;
-+
-+	params.baudrate = TranslateBaudeRate(baud);
-+	if(params.baudrate == 0)
-+		return 0;
-+	params.flags = -1;	// use driver defaults
-+	params.sjw = -1;	// use driver defaults
-+	params.sample_pt = -1;	// use driver defaults
-+	if(ioctl((int)fd0, CONF_BAUDPARAMS, &params) < 0)
-+	{
-+		fprintf(stderr, "canOpen_driver (lincan): IOCTL set speed failed\n");
-+		return 0;
-+	}
-+	return 1;
-+}
-+
-+/***************************************************************************/
-+static const char lnx_can_dev_prefix[] = "/dev/can";
-+
-+CAN_HANDLE canOpen_driver(s_BOARD *board)
-+{
-+	int name_len = strlen(board->busname);
-+	int prefix_len = strlen(lnx_can_dev_prefix);
-+	char dev_name[prefix_len+name_len+1];
-+	struct can_baudparams_t params;
-+	int o_flags = 0;
-+	int fd;
-+
-+	/*o_flags = O_NONBLOCK;*/
-+
-+	memcpy(dev_name,lnx_can_dev_prefix,prefix_len);
-+	memcpy(dev_name+prefix_len,board->busname,name_len);
-+	dev_name[prefix_len+name_len] = 0;
-+	printf("dev_name %s\n", dev_name);
-+
-+	fd = open(dev_name, O_RDWR|o_flags);
-+	if(fd < 0)
-+	{
-+		fprintf(stderr,"!!! Board %s is unknown. See can_lincan.c\n", board->busname);
-+		goto error_ret;
-+	}
-+	printf("fd = %d\n", fd);
-+
-+	// set baudrate
-+	params.baudrate = TranslateBaudeRate(board->baudrate);
-+	if(params.baudrate == 0)
-+		goto error_ret;
-+	params.flags = -1;	// use driver defaults
-+	params.sjw = -1;	// use driver defaults
-+	params.sample_pt = -1;	// use driver defaults
-+	if(ioctl(fd, CONF_BAUDPARAMS, &params) < 0)
-+	{
-+		fprintf(stderr, "canOpen_driver (lincan): IOCTL set speed failed\n");
-+		goto error_ret;
-+	}
-+
-+	return (CAN_HANDLE)fd;
-+
-+error_ret:
-+	return NULL;
-+}
-+
-+/***************************************************************************/
-+int canClose_driver(CAN_HANDLE fd0)
-+{
-+  if(!fd0)
++  }
++  else {
 +    return 0;
-+  close(fd0);
-+  return 0;
++  }
++
 +}
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/canmsg.h
++
++/***************************************************************************/
++unsigned char canChangeBaudRate_driver( CAN_HANDLE fd, char* baud)
++{
++
++	return 0;
++}
++
++
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/can_rtems/canmsg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/canmsg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,136 @@
@@ -436,7 +383,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/canmsg.h
 +#endif
 +
 +#endif /*_CANMSG_T_H*/
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/lincan.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/can_rtems/lincan.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/lincan.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,84 @@
@@ -524,7 +471,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/can_rtems/lincan.h
 +#endif
 +
 +#endif /*_CAN_DRVAPI_T_H*/
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/rtems/Makefile.in
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/rtems/Makefile.in
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,123 @@
@@ -651,7 +598,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/rtems/Makefile.in
 +mrproper: clean
 +
 +#endif
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/rtems/rtems.c
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/rtems/rtems.c
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/rtems/rtems.c	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,240 @@
@@ -895,7 +842,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/rtems/rtems.c
 +EXPORT_SYMBOL (canSend);
 +EXPORT_SYMBOL (canChangeBaudRate);
 +#endif
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/timers_rtems/Makefile.in
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/timers_rtems/Makefile.in
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/timers_rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,62 @@
@@ -961,7 +908,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/timers_rtems/Makefile.in
 +mrproper: clean
 +
 +
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/timers_rtems/timers_rtems.c
+diff -r 8bfe0ac00cdb -r 503e05d9a464 drivers/timers_rtems/timers_rtems.c
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/timers_rtems/timers_rtems.c	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,96 @@
@@ -1061,7 +1008,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 drivers/timers_rtems/timers_rtems.c
 +TIMEVAL getElapsedTime(void) {
 +  return rtems_clock_get_ticks_per_second() / last_signal_time_ticks;
 +}
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/def.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/def.h
 --- a/include/def.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/def.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -24,7 +24,7 @@
@@ -1073,7 +1020,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/def.h
  
  /** definitions used for object dictionary access. ie SDO Abort codes . (See DS 301 v.4.02 p.48)
   */
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/objacces.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/objacces.h
 --- a/include/objacces.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/objacces.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -39,7 +39,7 @@
@@ -1085,7 +1032,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/objacces.h
  
  
  #ifdef __cplusplus
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/pdo.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/pdo.h
 --- a/include/pdo.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/pdo.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -29,8 +29,8 @@
@@ -1099,7 +1046,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/pdo.h
  
  #include "can.h"
  
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/applicfg.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/rtems/applicfg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/applicfg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,112 @@
@@ -1215,7 +1162,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/applicfg.h
 +typedef void* CAN_PORT;
 +
 +#endif
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/canfestival.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/rtems/canfestival.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/canfestival.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,90 @@
@@ -1309,7 +1256,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/canfestival.h
 +#endif
 +
 +#endif /*UNIX_H_*/
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/canopen_config.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/rtems/canopen_config.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/canopen_config.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,29 @@
@@ -1342,7 +1289,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/canopen_config.h
 +
 +
 +#endif /* _CONFIG_H_ */
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/timerscfg.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/rtems/timerscfg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/timerscfg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,37 @@
@@ -1383,7 +1330,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/rtems/timerscfg.h
 +#define TASK_HANDLE pthread_t
 +
 +#endif
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/timer.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/timer.h
 --- a/include/timer.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/timer.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -23,8 +23,8 @@
@@ -1397,7 +1344,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/timer.h
  
  #define TIMER_HANDLE INTEGER16
  
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/timers_rtems/timerscfg.h
+diff -r 8bfe0ac00cdb -r 503e05d9a464 include/timers_rtems/timerscfg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/timers_rtems/timerscfg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,37 @@
@@ -1438,7 +1385,7 @@ diff -r 8bfe0ac00cdb -r 9c7c2dc23632 include/timers_rtems/timerscfg.h
 +#define TASK_HANDLE rtems_id
 +
 +#endif
-diff -r 8bfe0ac00cdb -r 9c7c2dc23632 src/Makefile.in
+diff -r 8bfe0ac00cdb -r 503e05d9a464 src/Makefile.in
 --- a/src/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
 +++ b/src/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -64,6 +64,7 @@
