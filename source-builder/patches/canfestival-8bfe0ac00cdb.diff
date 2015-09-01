@@ -1,0 +1,1402 @@
+# HG changeset patch
+# User Isaac Gutekunst <isaac.gutekunst@vecna.com>
+# Date 1440685021 14400
+#      Thu Aug 27 10:17:01 2015 -0400
+# Node ID 6a2a11cbf6f1042d4c9b7b701ed77b196171de4c
+# Parent  8bfe0ac00cdb4d473664fcbf1228a0f6a42eee15
+Added RTEMS Support
+
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 Makefile.in
+--- a/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
++++ b/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
+@@ -46,7 +46,6 @@
+ 	$(MAKE) -C src $@
+ 	$(MAKE) -C examples $@
+ 	$(MAKE) -C objdictgen $@
+-	ldconfig
+ 
+ uninstall:
+ 	$(MAKE) -C drivers $@
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 configure
+--- a/configure	Mon Aug 03 18:01:58 2015 +0200
++++ b/configure	Thu Aug 27 10:17:01 2015 -0400
+@@ -593,6 +593,11 @@
+ 	fi
+ fi
+ 
++if [ "$SUB_TARGET" = "rtems" ]; then
++	if [ "$LD" = "" ]; then
++        SUB_PROG_CFLAGS=$CFLAGS_FOR_HOST
++	fi
++fi
+ echo "Using ${LD} as a linker"
+ 
+ # Guess prefix as regard cross compiling target machine
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/Makefile.in
+--- a/drivers/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
++++ b/drivers/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
+@@ -46,9 +46,6 @@
+ 	$(MAKE) -C $(TIMERS_DRIVER) $@
+ endif
+ 
+-ifneq ($(CAN_DRIVER),can_)
+-	$(MAKE) -C $(CAN_DRIVER) $@
+-endif
+ ifneq ($(TARGET),none)
+ 	$(MAKE) -C $(TARGET) $@
+ endif
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/can_rtems/Makefile.in
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/can_rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,67 @@
++#! gmake
++
++#
++# Copyright (C) 2006 Laurent Bessard
++# 
++# This file is part of canfestival, a library implementing the canopen
++# stack
++# 
++# This library is free software; you can redistribute it and/or
++# modify it under the terms of the GNU Lesser General Public
++# License as published by the Free Software Foundation; either
++# version 2.1 of the License, or (at your option) any later version.
++# 
++# This library is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++# Lesser General Public License for more details.
++# 
++# You should have received a copy of the GNU Lesser General Public
++# License along with this library; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++# 
++
++CC = SUB_CC
++OPT_CFLAGS = -O2
++CFLAGS = SUB_OPT_CFLAGS
++PROG_CFLAGS = SUB_PROG_CFLAGS
++PREFIX = SUB_PREFIX
++TARGET = SUB_TARGET
++CAN_DRIVER = SUB_CAN_DRIVER
++TIMERS_DRIVER = SUB_TIMERS_DRIVER
++ENABLE_DLL_DRIVERS=SUB_ENABLE_DLL_DRIVERS
++
++INCLUDES = -I../../include -I../../include/$(TARGET) -I../../include/$(CAN_DRIVER)
++
++OBJS = $(CAN_DRIVER).o
++
++ifeq ($(ENABLE_DLL_DRIVERS),1)
++CFLAGS += -fPIC
++DRIVER = libcanfestival_$(CAN_DRIVER).so
++else
++DRIVER = $(OBJS)
++endif
++
++TARGET_SOFILES = $(DESTDIR)$(PREFIX)/lib/$(DRIVER)
++
++all: driver
++
++driver: $(DRIVER)
++
++%.o: %.c
++	$(CC) $(CFLAGS) $(PROG_CFLAGS) ${PROGDEFINES} $(INCLUDES) -o $@ -c $<
++
++libcanfestival_$(CAN_DRIVER).so: $(OBJS)
++	$(CC) -shared -Wl,-soname,libcanfestival_$(CAN_DRIVER).so $(CAN_DLL_CFLAGS) -o $@ $<
++
++install: libcanfestival_$(CAN_DRIVER).so
++	mkdir -p $(DESTDIR)$(PREFIX)/lib/
++	cp $< $(DESTDIR)$(PREFIX)/lib/
++	
++uninstall:
++	rm -f $(TARGET_HFILES)
++
++clean:
++	rm -f $(OBJS) libcanfestival_$(CAN_DRIVER).so
++
++mrproper: clean
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/can_rtems/can_rtems.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/can_rtems/can_rtems.c	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,114 @@
++/*
++This file is part of CanFestival, a library implementing CanOpen Stack.
++
++Copyright (C): Edouard TISSERANT and Francis DUPIN
++AVR Port: Andreas GLAUSER and Peter CHRISTEN
++
++See COPYING file for copyrights details.
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 2.1 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++*/
++
++//#define DEBUG_WAR_CONSOLE_ON
++//#define DEBUG_ERR_CONSOLE_ON
++
++
++#include "canfestival.h"
++#include <dev/can/can.h>
++#include <fcntl.h>
++#include <bsp.h>
++#include <unistd.h>
++#include <rtems/libio.h>
++
++
++
++
++volatile unsigned char msg_received = 0;
++int can = 5;
++CAN_HANDLE canOpen_driver(s_BOARD * board)
++/******************************************************************************
++Initialize the hardware to receive CAN messages and start the timer for the
++CANopen stack.
++INPUT	bitrate		bitrate in kilobit
++OUTPUT	1 if successful	
++******************************************************************************/
++{
++
++  char name[20];
++  sprintf(name, "/dev/can%d", 1);
++  can = open(name, O_RDWR | O_NONBLOCK, 0640);
++  can_filter f = {
++      .number = 0,
++      .filter = can_filter_stdid(0x2),
++      .mask   = 0,
++
++  };
++  ioctl(can, CAN_SET_FILTER, &f);
++  return can;
++}
++
++int canClose_driver(CAN_HANDLE fd) {
++  if (fd)
++    close(fd);
++  return 0;
++}
++
++unsigned char canSend_driver(CAN_HANDLE fd, Message const *m)
++/******************************************************************************
++The driver send a CAN message passed from the CANopen stack
++INPUT	CAN_PORT is not used (only 1 avaiable)
++	Message *m pointer to message to send
++OUTPUT	1 if  hardware -> CAN frame
++******************************************************************************/
++{
++  can_msg m2;
++  m2.id = m->cob_id;
++  m2.len = m->len;
++  memcpy(m2.data, m->data, m->len);
++  int status = write(fd, &m2, sizeof(m2));
++  return 1;
++}
++
++unsigned char canReceive_driver(CAN_HANDLE fd, Message *m)
++/******************************************************************************
++The driver pass a received CAN message to the stack
++INPUT	Message *m pointer to received CAN message
++OUTPUT	1 if a message received
++******************************************************************************/
++{
++  can_msg rx_m;
++
++  int status = read(can, &rx_m, sizeof(rx_m));
++  if (status > 0) {
++    size_t i;
++    m->len = rx_m.len;
++    m->cob_id = rx_m.id;
++    memcpy(m->data, rx_m.data, m->len);
++    return 1;
++  }
++  else {
++    return 0;
++  }
++
++}
++
++/***************************************************************************/
++unsigned char canChangeBaudRate_driver( CAN_HANDLE fd, char* baud)
++{
++
++	return 0;
++}
++
++
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/can_rtems/canmsg.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/can_rtems/canmsg.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,136 @@
++/* canmsg.h - common kernel-space and user-space CAN message structure
++ * Linux CAN-bus device driver.
++ * Written by Pavel Pisa - OCERA team member
++ * email:pisa@cmp.felk.cvut.cz
++ * This software is released under the GPL-License.
++ * Version lincan-0.3  17 Jun 2004
++ */
++
++#ifndef _CANMSG_T_H
++#define _CANMSG_T_H
++
++#ifdef __KERNEL__
++
++#include <linux/time.h>
++#include <linux/types.h>
++
++#else /* __KERNEL__ */
++
++#include <sys/time.h>
++#include <sys/types.h>
++
++#endif /* __KERNEL__ */
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/*
++ * CAN_MSG_VERSION_2 enables new canmsg_t layout compatible with
++ * can4linux project from http://www.port.de/
++ *
++ */
++#define CAN_MSG_VERSION_2
++
++/* Number of data bytes in one CAN message */
++#define CAN_MSG_LENGTH 8
++
++#ifdef CAN_MSG_VERSION_2
++
++typedef struct timeval canmsg_tstamp_t ;
++
++typedef unsigned long canmsg_id_t;
++
++/**
++ * struct canmsg_t - structure representing CAN message
++ * @flags:  message flags
++ *      %MSG_RTR .. message is Remote Transmission Request,
++ *	%MSG_EXT .. message with extended ID,
++ *      %MSG_OVR .. indication of queue overflow condition,
++ *	%MSG_LOCAL .. message originates from this node.
++ * @cob:    communication object number (not used)
++ * @id:     ID of CAN message
++ * @timestamp: not used
++ * @length: length of used data
++ * @data:   data bytes buffer
++ *
++ * Header: canmsg.h
++ */
++struct canmsg_t {
++	int             flags;
++	int             cob;
++	canmsg_id_t     id;
++	canmsg_tstamp_t timestamp;
++	unsigned short  length;
++	unsigned char   data[CAN_MSG_LENGTH];
++};
++
++#else /*CAN_MSG_VERSION_2*/
++#ifndef PACKED
++#define PACKED __attribute__((packed))
++#endif
++/* Old, deprecated version of canmsg_t structure */
++struct canmsg_t {
++	short		flags;
++	int		cob;
++	canmsg_id_t	id;
++	unsigned long	timestamp;
++	unsigned int	length;
++	unsigned char	data[CAN_MSG_LENGTH];
++} PACKED;
++#endif /*CAN_MSG_VERSION_2*/
++
++typedef struct canmsg_t canmsg_t;
++
++/**
++ * struct canfilt_t - structure for acceptance filter setup
++ * @flags:  message flags
++ *      %MSG_RTR .. message is Remote Transmission Request,
++ *	%MSG_EXT .. message with extended ID,
++ *      %MSG_OVR .. indication of queue overflow condition,
++ *	%MSG_LOCAL .. message originates from this node.
++ *	there are corresponding mask bits
++ *	%MSG_RTR_MASK, %MSG_EXT_MASK, %MSG_LOCAL_MASK.
++ *	%MSG_PROCESSLOCAL enables local messages processing in the
++ *	combination with global setting
++ * @queid:  CAN queue identification in the case of the multiple
++ *	    queues per one user (open instance)
++ * @cob:    communication object number (not used)
++ * @id:     selected required value of cared ID id bits
++ * @mask:   select bits significand for the comparation;
++ *          1 .. take care about corresponding ID bit, 0 .. don't care
++ *
++ * Header: canmsg.h
++ */
++struct canfilt_t {
++	int		flags;
++	int		queid;
++	int		cob;
++	canmsg_id_t	id;
++	canmsg_id_t	mask;
++};
++
++typedef struct canfilt_t canfilt_t;
++
++/* Definitions to use for canmsg_t and canfilt_t flags */
++#define MSG_RTR   (1<<0)
++#define MSG_OVR   (1<<1)
++#define MSG_EXT   (1<<2)
++#define MSG_LOCAL (1<<3)
++/* If you change above lines, check canque_filtid2internal function */
++
++/* Additional definitions used for canfilt_t only */
++#define MSG_FILT_MASK_SHIFT   8
++#define MSG_RTR_MASK   (MSG_RTR<<MSG_FILT_MASK_SHIFT)
++#define MSG_EXT_MASK   (MSG_EXT<<MSG_FILT_MASK_SHIFT)
++#define MSG_LOCAL_MASK (MSG_LOCAL<<MSG_FILT_MASK_SHIFT)
++#define MSG_PROCESSLOCAL (MSG_OVR<<MSG_FILT_MASK_SHIFT)
++
++/* Can message ID mask */
++#define MSG_ID_MASK ((1l<<29)-1)
++
++#ifdef __cplusplus
++} /* extern "C"*/
++#endif
++
++#endif /*_CANMSG_T_H*/
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/can_rtems/lincan.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/can_rtems/lincan.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,84 @@
++/* can.h
++ * Header file for the Linux CAN-bus driver.
++ * Written by Arnaud Westenberg email:arnaud@wanadoo.nl
++ * Rewritten for new CAN queues by Pavel Pisa - OCERA team member
++ * email:pisa@cmp.felk.cvut.cz
++ * This software is released under the GPL-License.
++ * Version lincan-0.3  17 Jun 2004
++ */
++
++#ifndef _CAN_DRVAPI_T_H
++#define _CAN_DRVAPI_T_H
++
++
++
++
++#include <sys/time.h>
++#include <sys/types.h>
++#include <rtems.h>
++//#include <sys/ioctl.h>
++
++
++#include "./canmsg.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* CAN ioctl magic number */
++#define CAN_IOC_MAGIC 'd'
++
++typedef unsigned long bittiming_t;
++typedef unsigned short channel_t;
++
++/**
++ * struct can_baudparams_t - datatype for calling CONF_BAUDPARAMS IOCTL
++ * @flags: reserved for additional flags for chip configuration, should be written -1 or 0
++ * @baudrate: baud rate in Hz
++ * @sjw: synchronization jump width (0-3) prescaled clock cycles
++ * @sampl_pt: sample point in % (0-100) sets (TSEG1+1)/(TSEG1+TSEG2+2) ratio
++ *
++ * The structure is used to configure new set of parameters into CAN controller chip.
++ * If default value of some field should be preserved, fill field by value -1.
++ */
++struct can_baudparams_t {
++	long flags;
++	long baudrate;
++	long sjw;
++	long sample_pt;
++};
++
++#define _IO(a, b, c) (a | b | sizeof(c))
++#define _IOW(a, b, c) _IO(a,b,c)
++
++/* CAN ioctl functions */
++#define CAN_DRV_QUERY _IO(CAN_IOC_MAGIC, 0)
++#define CAN_DRV_QRY_BRANCH    0	/* returns driver branch value - "LINC" for LinCAN driver */
++#define CAN_DRV_QRY_VERSION   1	/* returns driver version as (major<<16) | (minor<<8) | patch */
++#define CAN_DRV_QRY_MSGFORMAT 2	/* format of canmsg_t structure */
++
++#define CMD_START _IOW(CAN_IOC_MAGIC, 1, channel_t)
++#define CMD_STOP _IOW(CAN_IOC_MAGIC, 2, channel_t)
++//#define CMD_RESET 3
++
++#define CONF_BAUD _IOW(CAN_IOC_MAGIC, 4, bittiming_t)
++//#define CONF_ACCM
++//#define CONF_XTDACCM
++//#define CONF_TIMING
++//#define CONF_OMODE
++#define CONF_FILTER _IOW(CAN_IOC_MAGIC, 8, unsigned char)
++
++//#define CONF_FENABLE
++//#define CONF_FDISABLE
++
++#define STAT _IO(CAN_IOC_MAGIC, 9)
++#define CANQUE_FILTER _IOW(CAN_IOC_MAGIC, 10, struct canfilt_t)
++#define CANQUE_FLUSH  _IO(CAN_IOC_MAGIC, 11)
++#define CONF_BAUDPARAMS  _IOW(CAN_IOC_MAGIC, 11, struct can_baudparams_t)
++#define CANRTR_READ  _IOWR(CAN_IOC_MAGIC, 12, struct canmsg_t)
++
++#ifdef __cplusplus
++} /* extern "C"*/
++#endif
++
++#endif /*_CAN_DRVAPI_T_H*/
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/rtems/Makefile.in
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,123 @@
++#! gmake
++
++#
++# Copyright (C) 2006 Laurent Bessard
++#
++# This file is part of canfestival, a library implementing the canopen
++# stack
++#
++# This library is free software; you can redistribute it and/or
++# modify it under the terms of the GNU Lesser General Public
++# License as published by the Free Software Foundation; either
++# version 2.1 of the License, or (at your option) any later version.
++#
++# This library is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++# Lesser General Public License for more details.
++#
++# You should have received a copy of the GNU Lesser General Public
++# License along with this library; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++#
++
++#ifneq ($(KERNELRELEASE),)
++# Kbuild part of Makefile
++obj-m := libcanfestival_$(TARGET).o
++libcanfestival_$(TARGET)-objs := $(OBJS)
++
++#else
++# Normal Makefile
++CC = SUB_CC
++OPT_CFLAGS = -O2
++PROG_CFLAGS = SUB_PROG_CFLAGS
++OS_NAME = SUB_OS_NAME
++ARCH_NAME = SUB_ARCH_NAME
++PREFIX = SUB_PREFIX
++TARGET = SUB_TARGET
++CAN_DRIVER = SUB_CAN_DRIVER
++TIMERS_DRIVER = SUB_TIMERS_DRIVER
++ENABLE_DLL_DRIVERS = SUB_ENABLE_DLL_DRIVERS
++BINUTILS_PREFIX = SUB_BINUTILS_PREFIX
++
++INCLUDES = -I../../include -I../../include/$(TARGET) -I../../include/$(TIMERS_DRIVER)
++
++OBJS = $(TARGET).o
++
++# add timers driver if any
++ifneq ($(TIMERS_DRIVER),timers_)
++OBJS += ../$(TIMERS_DRIVER)/$(TIMERS_DRIVER).o
++endif
++
++SRC_HFILES = ../../include/$(TARGET)/applicfg.h ../../include/$(TARGET)/canfestival.h
++
++TARGET_HFILES = $(DESTDIR)$(PREFIX)/include/$(TARGET)/applicfg.h $(DESTDIR)$(PREFIX)/include/$(TARGET)/canfestival.h
++
++all: driver
++
++ifeq ($(TIMERS_DRIVER), timers_kernel)
++USE_KERNEL_TIMER = true
++endif
++ifeq ($(TIMERS_DRIVER), timers_kernel_xeno)
++USE_KERNEL_TIMER = true
++endif
++
++ifeq ($(USE_KERNEL_TIMER), true)
++OBJS := $(shell echo $(OBJS) | sed "s:$(TARGET)_::g")
++EXTRA_CFLAGS := $(shell echo $(INCLUDES) | sed "s:-I:-I$(src)/:g")
++EXTRA_CFLAGS += $(PROG_CFLAGS)
++KERNELDIR := SUB_KERNELDIR
++export TARGET
++export OBJS
++export EXTRA_CFLAGS
++
++driver: libcanfestival_$(TARGET)
++
++libcanfestival_$(TARGET):
++	@echo Building [libcanfestival_$(TARGET).o]
++	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) modules
++
++clean:
++	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) clean
++	rm -f Module.symvers
++
++install:
++
++
++else
++CFLAGS = SUB_OPT_CFLAGS
++
++driver: libcanfestival_$(TARGET).a
++
++%.o: %.c
++	$(CC) $(CFLAGS) $(PROG_CFLAGS) ${PROGDEFINES} $(INCLUDES) -o $@ -c $<
++
++#../$(TIMERS_DRIVER)/$(TIMERS_DRIVER).o:
++#	$(MAKE) -C ../$(TIMERS_DRIVER) driver
++
++#../$(CAN_DRIVER)/$(CAN_DRIVER).o:
++#	$(MAKE) -C ../$(CAN_DRIVER) driver
++
++libcanfestival_$(TARGET).a: $(OBJS)
++	@echo Building [libcanfestival_$(TARGET).a]
++	$(BINUTILS_PREFIX)ar rc $@ $(OBJS)
++	$(BINUTILS_PREFIX)ranlib $@
++
++install: libcanfestival_$(TARGET).a
++	mkdir -p $(DESTDIR)$(PREFIX)/lib/
++	mkdir -p $(DESTDIR)$(PREFIX)/include/canfestival
++	cp libcanfestival_$(TARGET).a $(DESTDIR)$(PREFIX)/lib/
++	cp $(SRC_HFILES) $(DESTDIR)$(PREFIX)/include/canfestival
++
++uninstall:
++	rm -f $(DESTDIR)$(PREFIX)/lib/libcanfestival_$(TARGET).a
++	rm -f $(TARGET_HFILES)
++
++clean:
++	rm -f $(OBJS)
++	rm -f libcanfestival_$(TARGET).a
++
++endif
++mrproper: clean
++
++#endif
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/rtems/rtems.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/rtems/rtems.c	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,240 @@
++/*
++This file is part of CanFestival, a library implementing CanOpen Stack.
++
++Copyright (C): Edouard TISSERANT and Francis DUPIN
++
++See COPYING file for copyrights details.
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 2.1 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++*/
++#ifndef __KERNEL__
++#include <unistd.h>
++#include <stdio.h>
++#include <stdlib.h>
++#else
++#include <linux/module.h>
++#include <linux/delay.h>
++#endif
++
++#define NOT_USE_DYNAMIC_LOADING
++
++#ifndef NOT_USE_DYNAMIC_LOADING
++#define DLL_CALL(funcname) (* funcname##_driver)
++#define FCT_PTR_INIT =NULL
++
++#define DLSYM(name)\
++	*(void **) (&name##_driver) = dlsym(handle, #name"_driver");\
++	if ((error = dlerror()) != NULL)  {\
++		fprintf (stderr, "%s\n", error);\
++		UnLoadCanDriver(handle);\
++		return NULL;\
++	}
++
++#else /*NOT_USE_DYNAMIC_LOADING*/
++
++/*Function call is direct*/
++#define DLL_CALL(funcname) funcname##_driver
++
++#endif /*NOT_USE_DYNAMIC_LOADING*/
++
++#include "data.h"
++#include "canfestival.h"
++#include "timers_driver.h"
++
++#define MAX_NB_CAN_PORTS 16
++
++/** CAN port structure */
++typedef struct {
++  char used;  /**< flag indicating CAN port usage, will be used to abort Receiver task*/
++  CAN_HANDLE fd; /**< CAN port file descriptor*/
++  TASK_HANDLE receiveTask; /**< CAN Receiver task*/
++  CO_Data* d; /**< CAN object data*/
++} CANPort;
++
++#include "can_driver.h"
++
++CANPort canports[MAX_NB_CAN_PORTS] = {{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,},{0,}};
++
++#ifndef NOT_USE_DYNAMIC_LOADING
++
++/*UnLoads the dll*/
++UNS8 UnLoadCanDriver(LIB_HANDLE handle)
++{
++	if(handle!=NULL)
++	{
++		dlclose(handle);
++
++		handle=NULL;
++		return 0;
++	}
++	return -1;
++}
++
++/**
++ * Loads the dll and get funcs ptr
++ *
++ * @param driver_name String containing driver's dynamic library name
++ * @return Library handle
++ */
++LIB_HANDLE LoadCanDriver(const char* driver_name)
++{
++	LIB_HANDLE handle = NULL;
++	char *error;
++
++
++	if(handle==NULL)
++	{
++		handle = dlopen(driver_name, RTLD_LAZY);
++	}
++
++	if (!handle) {
++		fprintf (stderr, "%s\n", dlerror());
++        	return NULL;
++	}
++
++	/*Get function ptr*/
++	DLSYM(canReceive)
++	DLSYM(canSend)
++	DLSYM(canOpen)
++	DLSYM(canChangeBaudRate)
++	DLSYM(canClose)
++
++	return handle;
++}
++
++#endif
++
++/**
++ * CAN send routine
++ * @param port CAN port
++ * @param m CAN message
++ * @return success or error
++ */
++UNS8 canSend(CAN_PORT port, Message *m)
++{
++	if(port){
++		UNS8 res;
++	        //LeaveMutex();
++		res = DLL_CALL(canSend)(((CANPort*)port)->fd, m);
++		//EnterMutex();
++		return res; // OK
++	}
++	return 1; // NOT OK
++}
++
++/**
++ * CAN Receiver Task
++ * @param port CAN port
++ */
++void canReceiveLoop(CAN_PORT port) {
++  Message m;
++  if (port == NULL) {
++    fprintf(stderr, 'Can Receive loop called with NULL argument\r\n');
++  }
++
++  while (((CANPort*) port)->used) {
++    if (DLL_CALL(canReceive)(((CANPort*) port)->fd, &m) == 1) {
++      EnterMutex();
++      canDispatch(((CANPort*) port)->d, &m);
++      LeaveMutex();
++    }
++    rtems_task_wake_after(1);
++  }
++}
++
++/**
++ * CAN open routine
++ * @param board device name and baudrate
++ * @param d CAN object data
++ * @return valid CAN_PORT pointer or NULL
++ */
++CAN_PORT canOpen(s_BOARD *board, CO_Data * d)
++{
++	int i;
++	for(i=0; i < MAX_NB_CAN_PORTS; i++)
++	{
++		if(!canports[i].used)
++		break;
++	}
++
++#ifndef NOT_USE_DYNAMIC_LOADING
++	if (&DLL_CALL(canOpen)==NULL) {
++        	fprintf(stderr,"CanOpen : Can Driver dll not loaded\n");
++        	return NULL;
++	}
++#endif
++	CAN_HANDLE fd0 = DLL_CALL(canOpen)(board);
++	if(fd0){
++		canports[i].used = 1;
++		canports[i].fd = fd0;
++		canports[i].d = d;
++		d->canHandle = (CAN_PORT)&canports[i];
++		CreateReceiveTask(&(canports[i]), &canports[i].receiveTask, &canReceiveLoop);
++		return (CAN_PORT)&canports[i];
++	}else{
++        	//MSG("CanOpen : Cannot open board {busname='%s',baudrate='%s'}\n",board->busname, board->baudrate);
++		return NULL;
++	}
++}
++
++/**
++ * CAN close routine
++ * @param d CAN object data
++ * @return success or error
++ */
++int canClose(CO_Data * d)
++{
++	int res = 0;
++
++	CANPort* port = (CANPort*)d->canHandle;
++    if(port){
++        ((CANPort*)d->canHandle)->used = 0;
++
++        res = DLL_CALL(canClose)(port->fd);
++
++        WaitReceiveTaskEnd(&port->receiveTask);
++
++        d->canHandle = NULL;
++    }
++
++	return res;
++}
++
++
++/**
++ * CAN change baudrate routine
++ * @param port CAN port
++ * @param baud baudrate
++ * @return success or error
++ */
++UNS8 canChangeBaudRate(CAN_PORT port, char* baud)
++{
++   if(port){
++		UNS8 res;
++	    //LeaveMutex();
++		res = DLL_CALL(canChangeBaudRate)(((CANPort*)port)->fd, baud);
++		//EnterMutex();
++		return res; // OK
++	}
++	return 1; // NOT OK
++}
++
++
++#ifdef __KERNEL__
++EXPORT_SYMBOL (canOpen);
++EXPORT_SYMBOL (canClose);
++EXPORT_SYMBOL (canSend);
++EXPORT_SYMBOL (canChangeBaudRate);
++#endif
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/timers_rtems/Makefile.in
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/timers_rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,62 @@
++#! gmake
++
++#
++# Copyright (C) 2006 Laurent Bessard
++# 
++# This file is part of canfestival, a library implementing the canopen
++# stack
++# 
++# This library is free software; you can redistribute it and/or
++# modify it under the terms of the GNU Lesser General Public
++# License as published by the Free Software Foundation; either
++# version 2.1 of the License, or (at your option) any later version.
++# 
++# This library is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++# Lesser General Public License for more details.
++# 
++# You should have received a copy of the GNU Lesser General Public
++# License along with this library; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++# 
++
++CC = SUB_CC
++OPT_CFLAGS = -O2
++CFLAGS = SUB_OPT_CFLAGS
++PROG_CFLAGS = SUB_PROG_CFLAGS
++OS_NAME = SUB_OS_NAME
++ARCH_NAME = SUB_ARCH_NAME
++PREFIX = SUB_PREFIX
++TARGET = SUB_TARGET
++CAN_DRIVER = SUB_CAN_DRIVER
++TIMERS_DRIVER = SUB_TIMERS_DRIVER
++
++INCLUDES = -I../../include -I../../include/$(TARGET) -I../../include/$(CAN_DRIVER) -I../../include/$(TIMERS_DRIVER)
++
++OBJS = $(TIMERS_DRIVER).o
++
++SRC_HFILES = ../../include/$(TIMERS_DRIVER)/timerscfg.h
++
++TARGET_HFILES = $(DESTDIR)$(PREFIX)/include/canfestival/timerscfg.h
++
++all: driver
++
++driver: $(OBJS)
++
++%.o: %.c
++	$(CC) $(CFLAGS) $(PROG_CFLAGS) ${PROGDEFINES} $(INCLUDES) -o $@ -c $<
++
++install:
++	mkdir -p $(DESTDIR)$(PREFIX)/include/canfestival
++	cp $(SRC_HFILES) $(DESTDIR)$(PREFIX)/include/canfestival
++
++uninstall:
++	rm -f $(TARGET_HFILES)
++
++clean:
++	rm -f $(OBJS)
++
++mrproper: clean
++
++
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 drivers/timers_rtems/timers_rtems.c
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/drivers/timers_rtems/timers_rtems.c	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,96 @@
++#include <stdlib.h>
++
++#include <sys/time.h>
++#include <pthread.h>
++#include <signal.h>
++#include <time.h>
++
++#include <applicfg.h>
++#include <timer.h>
++
++#include <rtems.h>
++
++rtems_id canopen_mutex;
++rtems_id canopen_rx_task_id;
++rtems_id canopen_timer;
++uint32_t last_signal_time_ticks;
++
++void EnterMutex(void) {
++  rtems_semaphore_obtain(canopen_mutex, RTEMS_WAIT, RTEMS_NO_TIMEOUT);
++}
++
++void LeaveMutex(void) {
++  rtems_semaphore_release(canopen_mutex);
++}
++
++void timer_notify(rtems_id id, void * arg) {
++  last_signal_time_ticks = rtems_clock_get_ticks_since_boot();
++
++  EnterMutex();
++  TimeDispatch();
++  LeaveMutex();
++}
++
++void TimerInit(void) {
++  rtems_status_code sc;
++  sc = rtems_semaphore_create(
++      rtems_build_name('C', 'M', 'T', 'X'),
++      1,
++      RTEMS_BINARY_SEMAPHORE | RTEMS_INHERIT_PRIORITY | RTEMS_PRIORITY,
++      0,
++      &canopen_mutex);
++
++  sc = rtems_timer_create(
++      rtems_build_name('C','T','M','R'),
++      &canopen_timer
++      );
++  sc = rtems_timer_initiate_server(5, RTEMS_MINIMUM_STACK_SIZE, RTEMS_NO_FLOATING_POINT);
++
++}
++
++void StopTimerLoop(TimerCallback_t exitfunction) {
++  EnterMutex();
++  LeaveMutex();
++}
++
++void StartTimerLoop(TimerCallback_t init_callback) {
++  EnterMutex();
++  // At first, TimeDispatch will call init_callback.
++  SetAlarm(NULL, 0, init_callback, 0, 0);
++  LeaveMutex();
++}
++
++void CreateReceiveTask(CAN_PORT port, TASK_HANDLE* Thread, void* ReceiveLoopPtr) {
++  rtems_status_code sc;
++  sc = rtems_task_create(
++      rtems_build_name('C', 'R', 'X', 'T'), 100,
++      RTEMS_MINIMUM_STACK_SIZE,
++      RTEMS_PREEMPT,
++      RTEMS_FLOATING_POINT, &canopen_rx_task_id);
++  if (sc != RTEMS_SUCCESSFUL) {
++    fprintf(stderr, "Failed to create rx task\r\n");
++  }
++  sc = rtems_task_start(
++      canopen_rx_task_id,
++      ReceiveLoopPtr,
++      (rtems_task_argument) port);
++  if (sc != RTEMS_SUCCESSFUL) {
++     fprintf(stderr, "Failed to start rx task\r\n");
++   }
++}
++
++void WaitReceiveTaskEnd(TASK_HANDLE *Thread) {
++  rtems_task_delete(canopen_rx_task_id);
++}
++
++#define maxval(a,b) ((a>b)?a:b)
++
++
++void setTimer(TIMEVAL value) {
++  rtems_status_code sc;
++  sc = rtems_timer_server_fire_after(canopen_timer, value + 1, timer_notify, NULL);
++}
++
++TIMEVAL getElapsedTime(void) {
++  return rtems_clock_get_ticks_per_second() / last_signal_time_ticks;
++}
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/def.h
+--- a/include/def.h	Mon Aug 03 18:01:58 2015 +0200
++++ b/include/def.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -24,7 +24,7 @@
+ #ifndef __def_h__
+ #define __def_h__
+ 
+-#include <config.h>
++#include "config.h"
+ 
+ /** definitions used for object dictionary access. ie SDO Abort codes . (See DS 301 v.4.02 p.48)
+  */
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/objacces.h
+--- a/include/objacces.h	Mon Aug 03 18:01:58 2015 +0200
++++ b/include/objacces.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -39,7 +39,7 @@
+ #ifndef __objacces_h__
+ #define __objacces_h__
+ 
+-#include <applicfg.h>
++#include "applicfg.h"
+ 
+ 
+ #ifdef __cplusplus
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/pdo.h
+--- a/include/pdo.h	Mon Aug 03 18:01:58 2015 +0200
++++ b/include/pdo.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -29,8 +29,8 @@
+ #ifndef __pdo_h__
+ #define __pdo_h__
+ 
+-#include <applicfg.h>
+-#include <def.h>
++#include "applicfg.h"
++#include "def.h"
+ 
+ #include "can.h"
+ 
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/rtems/applicfg.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/rtems/applicfg.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,112 @@
++/*
++This file is part of CanFestival, a library implementing CanOpen Stack. 
++
++Copyright (C): Edouard TISSERANT and Francis DUPIN
++
++See COPYING file for copyrights details.
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 2.1 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++*/
++
++#ifndef __APPLICFG_LINUX__
++#define __APPLICFG_LINUX__
++
++#ifndef __KERNEL__
++#include <string.h>
++#include <stdio.h>
++#include <sys/types.h>
++#else
++#include <linux/types.h>
++#endif
++
++/*  Define the architecture : little_endian or big_endian
++ -----------------------------------------------------
++ Test :
++ UNS32 v = 0x1234ABCD;
++ char *data = &v;
++
++ Result for a little_endian architecture :
++ data[0] = 0xCD;
++ data[1] = 0xAB;
++ data[2] = 0x34;
++ data[3] = 0x12;
++
++ Result for a big_endian architecture :
++ data[0] = 0x12;
++ data[1] = 0x34;
++ data[2] = 0xAB;
++ data[3] = 0xCD;
++ */
++
++/* Integers */
++#define INTEGER8 int8_t
++#define INTEGER16 int16_t
++#define INTEGER24 int32_t
++#define INTEGER32 int32_t
++#define INTEGER40 int64_t
++#define INTEGER48 int64_t
++#define INTEGER56 int64_t
++#define INTEGER64 int64_t
++
++/* Unsigned integers */
++#define UNS8   u_int8_t
++#define UNS16  u_int16_t
++#define UNS32  u_int32_t
++#define UNS24  u_int32_t
++#define UNS40  u_int64_t
++#define UNS48  u_int64_t
++#define UNS56  u_int64_t
++#define UNS64  u_int64_t
++
++/* Reals */
++#define REAL32	float
++#define REAL64 double
++
++/* Definition of error and warning macros */
++/* -------------------------------------- */
++#ifdef __KERNEL__
++#	define MSG(...) printk (__VA_ARGS__)
++//#elif defined USE_RTAI
++//#	define MSG(...) rt_printk (__VA_ARGS__)
++#elif defined USE_XENO
++#	define MSG(...)
++#else
++#	include <stdio.h>
++#	define MSG(...) printf (__VA_ARGS__)
++#endif
++
++/* Definition of MSG_ERR */
++/* --------------------- */
++#ifdef DEBUG_ERR_CONSOLE_ON
++#    define MSG_ERR(num, str, val)            \
++          MSG("%s,%d : 0X%x %s 0X%x \n",__FILE__, __LINE__,num, str, val);
++#else
++#    define MSG_ERR(num, str, val)
++#endif
++
++/* Definition of MSG_WAR */
++/* --------------------- */
++#ifdef DEBUG_WAR_CONSOLE_ON
++#    define MSG_WAR(num, str, val)          \
++          MSG("%s,%d : 0X%x %s 0X%x \n",__FILE__, __LINE__,num, str, val);
++#else
++#    define MSG_WAR(num, str, val)
++#endif
++
++typedef void* CAN_HANDLE;
++
++typedef void* CAN_PORT;
++
++#endif
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/rtems/canfestival.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/rtems/canfestival.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,90 @@
++#ifndef UNIX_H_
++#define UNIX_H_
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++//#include "timerscfg.h"
++#include "can_driver.h"
++#include "data.h"
++#include "timers_driver.h"
++
++#ifndef __KERNEL__
++#endif
++
++typedef void* LIB_HANDLE;
++
++/** @defgroup userapi User API */
++
++/** @defgroup can CAN management
++ *  @ingroup userapi
++ */
++
++/**
++ * @ingroup can
++ * @brief Unload CAN driver interface
++ * @param handle The library handle
++ * @return
++ *       -  0 is returned upon success.
++ *       - -1 is returned if the CAN driver interface can't be unloaded.
++ */
++UNS8 UnLoadCanDriver(LIB_HANDLE handle);
++
++/**
++ * @ingroup can
++ * @brief Load CAN driver interface.
++ * @param *driver_name The location of the library to load
++ * @return
++ *       - handle of the CAN driver interface is returned upon success.
++ *       - NULL is returned if the CAN driver interface can't be loaded.
++ */
++LIB_HANDLE LoadCanDriver(const char* driver_name);
++
++/**
++ * @brief Send a CAN message
++ * @param port CanFestival file descriptor
++ * @param *m The CAN message to send
++ * @return 0 if succes
++ */
++UNS8 canSend(CAN_PORT port, Message *m);
++
++/**
++ * @ingroup can
++ * @brief Open a CANOpen device
++ * @param *board Pointer to the board structure that contains busname and baudrate 
++ * @param *d Pointer to the CAN object data structure
++ * @return
++ *       - CanFestival file descriptor is returned upon success.
++ *       - NULL is returned if the CANOpen board can't be opened.
++ */
++CAN_PORT canOpen(s_BOARD *board, CO_Data * d);
++
++/**
++ * @ingroup can
++ * @brief Close a CANOpen device
++ * @param *d Pointer to the CAN object data structure
++ * @return
++ *       - 0 is returned upon success.
++ *       - errorcode if error. (if implemented)  
++ */
++int canClose(CO_Data * d);
++
++/**
++ * @ingroup can
++ * @brief Change the CANOpen device baudrate 
++ * @param port CanFestival file descriptor 
++ * @param *baud The new baudrate to assign
++ * @return
++ *       - 0 is returned upon success or if not supported by the CAN driver.
++ *       - errorcode from the CAN driver is returned if an error occurs. (if implemented in the CAN driver)
++ */
++UNS8 canChangeBaudRate(CAN_PORT port, char* baud);
++
++
++
++#ifdef __cplusplus
++};
++#endif
++
++#endif /*UNIX_H_*/
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/rtems/canopen_config.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/rtems/canopen_config.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,29 @@
++/*
++This file is part of CanFestival, a library implementing CanOpen Stack.
++
++Copyright (C): Edouard TISSERANT and Francis DUPIN
++AVR Port: Andreas GLAUSER and Peter CHRISTEN
++
++See COPYING file for copyrights details.
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 2.1 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++*/
++
++#ifndef _CONFIG_H_
++#define _CONFIG_H_
++
++
++
++#endif /* _CONFIG_H_ */
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/rtems/timerscfg.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/rtems/timerscfg.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,37 @@
++/*
++This file is part of CanFestival, a library implementing CanOpen Stack. 
++
++Copyright (C): Edouard TISSERANT and Francis DUPIN
++
++See COPYING file for copyrights details.
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 2.1 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++*/
++
++#ifndef __TIMERSCFG_H__
++#define __TIMERSCFG_H__
++#include <rtems.h>
++
++
++/* Time unit : ms */
++/* Time resolution : 1000 seconds) */
++#define TIMEVAL uint32_t
++#define TIMEVAL_MAX ~(TIMEVAL)0
++#define MS_TO_TIMEVAL(ms) (ms)
++#define US_TO_TIMEVAL(us) (us/1000L)
++
++#define TASK_HANDLE rtems_id
++
++#endif
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/timer.h
+--- a/include/timer.h	Mon Aug 03 18:01:58 2015 +0200
++++ b/include/timer.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -23,8 +23,8 @@
+ #ifndef __timer_h__
+ #define __timer_h__
+ 
+-#include <timerscfg.h>
+-#include <applicfg.h>
++#include "timerscfg.h"
++#include "applicfg.h"
+ 
+ #define TIMER_HANDLE INTEGER16
+ 
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 include/timers_rtems/timerscfg.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/include/timers_rtems/timerscfg.h	Thu Aug 27 10:17:01 2015 -0400
+@@ -0,0 +1,37 @@
++/*
++This file is part of CanFestival, a library implementing CanOpen Stack. 
++
++Copyright (C): Edouard TISSERANT and Francis DUPIN
++
++See COPYING file for copyrights details.
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 2.1 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++*/
++
++#ifndef __TIMERSCFG_H__
++#define __TIMERSCFG_H__
++
++#include <rtems.h>
++
++/* Time unit : us */
++/* Time resolution : 64bit (~584942 years) */
++#define TIMEVAL uint32_t
++#define TIMEVAL_MAX (1000L * 1000L)
++#define MS_TO_TIMEVAL(ms) (ms)
++#define US_TO_TIMEVAL(us) (us / 1000L)
++
++#define TASK_HANDLE rtems_id
++
++#endif
+diff -r 8bfe0ac00cdb -r 6a2a11cbf6f1 src/Makefile.in
+--- a/src/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
++++ b/src/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
+@@ -64,6 +64,7 @@
+ 
+ all: canfestival
+ 
++
+ ifeq ($(TIMERS_DRIVER), timers_kernel)
+ USE_KERNEL_TIMER = true
+ endif
+@@ -71,9 +72,12 @@
+ USE_KERNEL_TIMER = true
+ endif
+ 
++OBJS += ../drivers/can_rtems/can_rtems.o
++
+ ifeq ($(USE_KERNEL_TIMER), true)
+ OBJS := $(shell echo $(OBJS) | sed "s:$(TARGET)_::g")
+ OBJS += symbols.o
++OBJS += ../drivers/can_rtems/can_rtems.o
+ OBJS += ../drivers/unix/libcanfestival_$(TARGET).o
+ EXTRA_CFLAGS := $(shell echo $(INCLUDES) | sed "s:-I:-I$(src)/:g")
+ EXTRA_CFLAGS += $(PROG_CFLAGS)
