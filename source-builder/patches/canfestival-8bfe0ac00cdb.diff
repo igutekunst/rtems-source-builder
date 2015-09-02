@@ -2,11 +2,11 @@
 # User Isaac Gutekunst <isaac.gutekunst@vecna.com>
 # Date 1440685021 14400
 #      Thu Aug 27 10:17:01 2015 -0400
-# Node ID ef8ebf0c773aad65195d52893584f53e70acaa2b
+# Node ID 1d02332fb62f8d131c20ae1f17d167728d25edd9
 # Parent  8bfe0ac00cdb4d473664fcbf1228a0f6a42eee15
 Added RTEMS Support
 
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a Makefile.in
+diff -r 8bfe0ac00cdb -r 1d02332fb62f Makefile.in
 --- a/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
 +++ b/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -46,7 +46,6 @@
@@ -17,7 +17,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a Makefile.in
  
  uninstall:
  	$(MAKE) -C drivers $@
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a configure
+diff -r 8bfe0ac00cdb -r 1d02332fb62f configure
 --- a/configure	Mon Aug 03 18:01:58 2015 +0200
 +++ b/configure	Thu Aug 27 10:17:01 2015 -0400
 @@ -593,6 +593,11 @@
@@ -32,7 +32,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a configure
  echo "Using ${LD} as a linker"
  
  # Guess prefix as regard cross compiling target machine
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/Makefile.in
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/Makefile.in
 --- a/drivers/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
 +++ b/drivers/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -46,9 +46,6 @@
@@ -45,7 +45,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/Makefile.in
  ifneq ($(TARGET),none)
  	$(MAKE) -C $(TARGET) $@
  endif
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/Makefile.in
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/can_rtems/Makefile.in
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,67 @@
@@ -116,10 +116,10 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/Makefile.in
 +	rm -f $(OBJS) libcanfestival_$(CAN_DRIVER).so
 +
 +mrproper: clean
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/can_rtems.c
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/can_rtems/can_rtems.c
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/can_rtems.c	Thu Aug 27 10:17:01 2015 -0400
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,135 @@
 +/*
 +This file is part of CanFestival, a library implementing CanOpen Stack.
 +
@@ -156,6 +156,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/can_rtems.c
 +
 +
 +
++int translate_baud_rate(char* optarg);
 +
 +volatile unsigned char msg_received = 0;
 +int can = 5;
@@ -164,20 +165,28 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/can_rtems.c
 +Initialize the hardware to receive CAN messages and start the timer for the
 +CANopen stack.
 +INPUT	bitrate		bitrate in kilobit
-+OUTPUT	1 if successful	
++OUTPUT can handle
 +******************************************************************************/
 +{
 +
 +  char name[20];
 +  sprintf(name, "/dev/can%s", board->busname);
 +  can = open(name, O_RDWR | O_NONBLOCK, 0640);
++
++  // Configure the filter to accept all messages
 +  can_filter f = {
 +      .number = 0,
 +      .filter = can_filter_stdid(0x2),
 +      .mask   = 0,
 +
 +  };
-+  ioctl(can, CAN_SET_FILTER, &f);
++
++  int numFilters = ioctl(can, CAN_GET_NUM_FILTERS);
++  if (numFilters) {
++    ioctl(can, CAN_SET_FILTER, &f);
++  }
++
++  ioctl(can, CAN_SET_BAUDRATE, translate_baud_rate(board->baudrate));
 +  return can;
 +}
 +
@@ -230,11 +239,23 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/can_rtems.c
 +unsigned char canChangeBaudRate_driver( CAN_HANDLE fd, char* baud)
 +{
 +
++  ioctl(fd, CAN_SET_BAUDRATE, baud);
 +	return 0;
 +}
 +
++int translate_baud_rate(char* optarg){
++	if(!strcmp( optarg, "1M")) return 1000000;
++	if(!strcmp( optarg, "500K")) return 500000;
++	if(!strcmp( optarg, "250K")) return 250000;
++	if(!strcmp( optarg, "125K")) return 125000;
++	if(!strcmp( optarg, "100K")) return 100000;
++	if(!strcmp( optarg, "50K")) return 50000;
++	if(!strcmp( optarg, "20K")) return 20000;
++	if(!strcmp( optarg, "none")) return 0;
++	return 0x0000;
++}
 +
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/canmsg.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/can_rtems/canmsg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/canmsg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,136 @@
@@ -374,7 +395,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/canmsg.h
 +#endif
 +
 +#endif /*_CANMSG_T_H*/
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/lincan.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/can_rtems/lincan.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/can_rtems/lincan.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,84 @@
@@ -462,7 +483,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/can_rtems/lincan.h
 +#endif
 +
 +#endif /*_CAN_DRVAPI_T_H*/
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/rtems/Makefile.in
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/rtems/Makefile.in
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,123 @@
@@ -589,7 +610,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/rtems/Makefile.in
 +mrproper: clean
 +
 +#endif
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/rtems/rtems.c
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/rtems/rtems.c
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/rtems/rtems.c	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,240 @@
@@ -833,7 +854,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/rtems/rtems.c
 +EXPORT_SYMBOL (canSend);
 +EXPORT_SYMBOL (canChangeBaudRate);
 +#endif
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/timers_rtems/Makefile.in
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/timers_rtems/Makefile.in
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/timers_rtems/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,62 @@
@@ -899,7 +920,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/timers_rtems/Makefile.in
 +mrproper: clean
 +
 +
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/timers_rtems/timers_rtems.c
+diff -r 8bfe0ac00cdb -r 1d02332fb62f drivers/timers_rtems/timers_rtems.c
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/drivers/timers_rtems/timers_rtems.c	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,96 @@
@@ -999,7 +1020,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a drivers/timers_rtems/timers_rtems.c
 +TIMEVAL getElapsedTime(void) {
 +  return rtems_clock_get_ticks_per_second() / last_signal_time_ticks;
 +}
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/def.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/def.h
 --- a/include/def.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/def.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -24,7 +24,7 @@
@@ -1011,7 +1032,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/def.h
  
  /** definitions used for object dictionary access. ie SDO Abort codes . (See DS 301 v.4.02 p.48)
   */
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/objacces.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/objacces.h
 --- a/include/objacces.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/objacces.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -39,7 +39,7 @@
@@ -1023,7 +1044,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/objacces.h
  
  
  #ifdef __cplusplus
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/pdo.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/pdo.h
 --- a/include/pdo.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/pdo.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -29,8 +29,8 @@
@@ -1037,7 +1058,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/pdo.h
  
  #include "can.h"
  
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/applicfg.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/rtems/applicfg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/applicfg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,112 @@
@@ -1153,7 +1174,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/applicfg.h
 +typedef void* CAN_PORT;
 +
 +#endif
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/canfestival.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/rtems/canfestival.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/canfestival.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,90 @@
@@ -1247,7 +1268,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/canfestival.h
 +#endif
 +
 +#endif /*UNIX_H_*/
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/canopen_config.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/rtems/canopen_config.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/canopen_config.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,29 @@
@@ -1280,7 +1301,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/canopen_config.h
 +
 +
 +#endif /* _CONFIG_H_ */
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/timerscfg.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/rtems/timerscfg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/rtems/timerscfg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,37 @@
@@ -1321,7 +1342,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/rtems/timerscfg.h
 +#define TASK_HANDLE rtems_id
 +
 +#endif
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/timer.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/timer.h
 --- a/include/timer.h	Mon Aug 03 18:01:58 2015 +0200
 +++ b/include/timer.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -23,8 +23,8 @@
@@ -1335,7 +1356,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/timer.h
  
  #define TIMER_HANDLE INTEGER16
  
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/timers_rtems/timerscfg.h
+diff -r 8bfe0ac00cdb -r 1d02332fb62f include/timers_rtems/timerscfg.h
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
 +++ b/include/timers_rtems/timerscfg.h	Thu Aug 27 10:17:01 2015 -0400
 @@ -0,0 +1,37 @@
@@ -1376,7 +1397,7 @@ diff -r 8bfe0ac00cdb -r ef8ebf0c773a include/timers_rtems/timerscfg.h
 +#define TASK_HANDLE rtems_id
 +
 +#endif
-diff -r 8bfe0ac00cdb -r ef8ebf0c773a src/Makefile.in
+diff -r 8bfe0ac00cdb -r 1d02332fb62f src/Makefile.in
 --- a/src/Makefile.in	Mon Aug 03 18:01:58 2015 +0200
 +++ b/src/Makefile.in	Thu Aug 27 10:17:01 2015 -0400
 @@ -64,6 +64,7 @@
