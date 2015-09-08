@@ -56,11 +56,11 @@ _uid:                none,    convert,  '%(%{__id_u} -n)'
 # Default flags that can be overridded to supply specific host or build
 # flags and include paths to the tools. The host is the final platform
 # the tools will run on and build is the host building the tools.
-host_cflags:         none,    convert,  '-O2 -pipe'
-host_cxxflags:       none,    convert,  '-O2 -pipe'
+host_cflags:         none,    convert,  '-O0 -pipe'
+host_cxxflags:       none,    convert,  '-O0 -pipe'
 host_includes:       none,    convert,  ''
-build_cflags:        none,    convert,  '-O2 -pipe'
-build_cxxflags:      none,    convert,  '-O2 -pipe'
+build_cflags:        none,    convert,  '-O0 -pipe'
+build_cxxflags:      none,    convert,  '-O0 -pipe'
 build_includes:      none,    convert,  ''
 
 # Extra path a platform can override.
