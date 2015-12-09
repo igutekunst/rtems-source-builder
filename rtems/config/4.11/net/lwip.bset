@@ -9,6 +9,8 @@
 #
 %define rtems_version 4.11
 
+%define isaac_patches_git  https://raw.githubusercontent.com/igutekunst/rtems-source-builder/master/source-builder/patches
+
 #
 # The RTEMS URL paths.
 #
